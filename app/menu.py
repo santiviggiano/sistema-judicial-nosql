@@ -1,12 +1,12 @@
 from pymongo import MongoClient
 import redis
 from neo4j import GraphDatabase
+import time
+from collections import defaultdict
 
-# MongoDB
 mongo_client = MongoClient("mongodb://localhost:27017/")
 db = mongo_client["sistema_judicial"]
 
-# Redis
 r = redis.Redis(
     host="localhost",
     port=6379,
@@ -14,11 +14,12 @@ r = redis.Redis(
     decode_responses=True
 )
 
-# Neo4j
 neo4j_driver = GraphDatabase.driver(
     "neo4j://127.0.0.1:7687",
     auth=("neo4j", "Datos2026")
 )
+
+AGENDA_KEY = "agenda:Juzgado1:20260601"
 
 print("=" * 50)
 print(" SISTEMA JUDICIAL POLIGLOTA ")
@@ -31,6 +32,9 @@ while True:
     print("3 - Búsqueda de expediente y control de acceso")
     print("4 - Detección de conflicto de interés")
     print("5 - Cierre de audiencia")
+    print("6 - Marcar sala como disponible")
+    print("7 - Registrar audiencia en agenda")
+    print("8 - Revocar acceso temporal")
     print("0 - Salir")
 
     opcion = input("\nOpción: ")
@@ -39,18 +43,26 @@ while True:
         print("\n[OP-1] Panel operativo del juzgado")
 
         print("\n=== SALAS ===")
+        salas_disponibles = []
+
         for sala in range(1, 4):
             datos = r.hgetall(f"sala:{sala}")
             if datos:
-                print(f"Sala {sala} | Estado: {datos.get('estado', '-')}")
+                estado = datos.get("estado", "-")
+                print(f"Sala {sala} | Estado: {estado}")
 
-        print("\n=== AGENDA ===")
-        agenda = r.zrange(
-            "agenda:Juzgado1:20260601",
-            0,
-            -1,
-            withscores=True
-        )
+                if estado == "disponible":
+                    salas_disponibles.append(sala)
+
+        print("\n=== SALAS DISPONIBLES ===")
+        if salas_disponibles:
+            for sala in salas_disponibles:
+                print(f"Sala {sala} disponible")
+        else:
+            print("No hay salas disponibles")
+
+        print("\n=== AGENDA DEL DÍA ===")
+        agenda = r.zrange(AGENDA_KEY, 0, -1, withscores=True)
 
         if agenda:
             for expediente, horario in agenda:
@@ -58,7 +70,69 @@ while True:
         else:
             print("Sin audiencias pendientes")
 
-        print("\n=== ULTIMAS NOTIFICACIONES ===")
+        print("\n=== PRÓXIMA AUDIENCIA ===")
+        proxima = r.zrange(AGENDA_KEY, 0, 0, withscores=True)
+
+        if proxima:
+            expediente, horario = proxima[0]
+            print(f"Próxima audiencia: {expediente} -> {int(horario)}")
+        else:
+            print("No hay próxima audiencia")
+
+        print("\n=== AUDIENCIAS DE LAS PRÓXIMAS 2 HORAS ===")
+        if proxima:
+            base = int(proxima[0][1])
+            limite = base + 7200
+
+            proximas = r.zrangebyscore(
+                AGENDA_KEY,
+                base,
+                limite,
+                withscores=True
+            )
+
+            for expediente, horario in proximas:
+                print(f"{expediente} -> {int(horario)}")
+        else:
+            print("No hay audiencias para listar")
+
+        print("\n=== SOLAPAMIENTOS ===")
+        horarios = defaultdict(list)
+
+        for expediente, horario in agenda:
+            horarios[int(horario)].append(expediente)
+
+        hay_solapamiento = False
+
+        for horario, expedientes in horarios.items():
+            if len(expedientes) > 1:
+                hay_solapamiento = True
+                print(f"Horario {horario}: {expedientes}")
+
+        if not hay_solapamiento:
+            print("No se detectaron solapamientos")
+
+        print("\n=== CARGA DEL DÍA ===")
+        print(f"Total de audiencias programadas: {r.zcard(AGENDA_KEY)}")
+
+        print("\n=== AUDIENCIAS CON RETRASO ===")
+        ahora = int(time.time())
+        hay_retraso = False
+
+        for sala in range(1, 4):
+            datos = r.hgetall(f"sala:{sala}")
+
+            if datos.get("estado") == "en_audiencia":
+                fin_estimado = datos.get("hora_fin_estimada_ts")
+
+                if fin_estimado and ahora > int(fin_estimado) + 1800:
+                    hay_retraso = True
+                    print(f"Sala {sala} con audiencia retrasada")
+
+        if not hay_retraso:
+            print("No se detectaron audiencias con retraso")
+
+        print("\n=== ÚLTIMAS NOTIFICACIONES ===")
         eventos = r.xrevrange("notificaciones", count=5)
 
         for evento_id, datos in eventos:
@@ -74,16 +148,19 @@ while True:
         expediente_id = input("Expediente: ")
         sala = input("Sala: ")
 
+        hora_fin_estimada_ts = int(time.time()) + 3600
+
         r.hset(
             f"sala:{sala}",
             mapping={
                 "estado": "en_audiencia",
                 "expediente_activo": expediente_id,
-                "hora_fin_estimada": "18:00"
+                "hora_fin_estimada": "18:00",
+                "hora_fin_estimada_ts": hora_fin_estimada_ts
             }
         )
 
-        r.zrem("agenda:Juzgado1:20260601", expediente_id)
+        r.zrem(AGENDA_KEY, expediente_id)
 
         r.xadd(
             "notificaciones",
@@ -145,6 +222,7 @@ while True:
                 print(expediente)
             else:
                 print("\nNo existe el expediente")
+
         else:
             print("\nNo existe acceso vigente")
 
@@ -200,7 +278,8 @@ while True:
             mapping={
                 "estado": "en_preparacion",
                 "expediente_activo": "",
-                "hora_fin_estimada": ""
+                "hora_fin_estimada": "",
+                "hora_fin_estimada_ts": ""
             }
         )
 
@@ -237,6 +316,48 @@ while True:
         print("Notificación de cierre enviada a Redis")
         print("Acta registrada en MongoDB")
         print(f"Relación CONEXO_A agregada en Neo4j entre {expediente_id} y {expediente_conexo}")
+
+    elif opcion == "6":
+        print("\n[Redis] Marcar sala como disponible")
+
+        sala = input("Sala: ")
+
+        r.hset(
+            f"sala:{sala}",
+            mapping={
+                "estado": "disponible",
+                "expediente_activo": "",
+                "hora_fin_estimada": "",
+                "hora_fin_estimada_ts": ""
+            }
+        )
+
+        print(f"Sala {sala} marcada como disponible")
+
+    elif opcion == "7":
+        print("\n[Redis] Registrar audiencia en agenda")
+
+        expediente_id = input("Expediente: ")
+        timestamp = int(input("Timestamp de inicio: "))
+
+        r.zadd(AGENDA_KEY, {expediente_id: timestamp})
+
+        print(f"Audiencia {expediente_id} registrada en agenda")
+
+    elif opcion == "8":
+        print("\n[Redis] Revocar acceso temporal")
+
+        expediente_id = input("Expediente: ")
+        operador_id = input("Operador: ")
+
+        clave = f"acceso:{expediente_id}:{operador_id}"
+
+        eliminado = r.delete(clave)
+
+        if eliminado:
+            print("Acceso revocado correctamente")
+        else:
+            print("No existía acceso vigente para revocar")
 
     elif opcion == "0":
         print("\nSaliendo...")
