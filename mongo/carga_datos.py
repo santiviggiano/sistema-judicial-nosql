@@ -103,3 +103,108 @@ db.expedientes.insert_many(expedientes)
 print("200 expedientes cargados")
 
 print("Carga inicial finalizada")
+
+
+
+# ==========================
+# ACTUACIONES
+# ==========================
+
+actuaciones = []
+
+tipos_actuacion = [
+    "inicio_audiencia",
+    "fin_audiencia",
+    "resolucion",
+    "presentacion",
+    "notificacion"
+]
+
+for i in range(1, 501):
+
+    actuaciones.append({
+        "actuacion_id": f"ACT{i}",
+        "expediente_id": f"EXP{random.randint(1,200)}",
+        "tipo": random.choice(tipos_actuacion),
+        "fecha": datetime(
+            2025,
+            random.randint(1,12),
+            random.randint(1,28)
+        ),
+        "autor": f"P{random.randint(1,300)}",
+        "texto": f"Texto actuación {i}"
+    })
+
+db.actuaciones.insert_many(actuaciones)
+
+print("500 actuaciones cargadas")
+
+# ==========================
+# AUDIENCIAS
+# ==========================
+
+audiencias = []
+
+tipos_audiencia = [
+    "oral",
+    "testimonial",
+    "indagatoria",
+    "conciliacion"
+]
+
+for i in range(1, 101):
+
+    audiencias.append({
+        "audiencia_id": f"AUD{i}",
+        "expediente_id": f"EXP{random.randint(1,200)}",
+        "tipo": random.choice(tipos_audiencia),
+        "fecha": datetime(
+            2026,
+            random.randint(1,12),
+            random.randint(1,28)
+        ),
+        "sala": f"Sala {random.randint(1,5)}",
+        "participantes": [
+            f"P{random.randint(1,300)}",
+            f"P{random.randint(1,300)}"
+        ],
+        "resultado": "pendiente",
+        "acta": ""
+    })
+
+db.audiencias.insert_many(audiencias)
+
+print("100 audiencias cargadas")
+
+
+# ==========================
+# RESOLUCIONES
+# ==========================
+
+resoluciones = []
+
+tipos_resolucion = [
+    "sentencia",
+    "auto",
+    "providencia"
+]
+
+for i in range(1, 81):
+
+    resoluciones.append({
+        "resolucion_id": f"RES{i}",
+        "expediente_id": f"EXP{random.randint(1,200)}",
+        "tipo": random.choice(tipos_resolucion),
+        "fecha": datetime(
+            2026,
+            random.randint(1,12),
+            random.randint(1,28)
+        ),
+        "juez": f"P{random.randint(296,300)}",
+        "decision": f"Decisión {i}",
+        "apelable": random.choice([True, False])
+    })
+
+db.resoluciones.insert_many(resoluciones)
+
+print("80 resoluciones cargadas")
